@@ -70,8 +70,8 @@ def generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args):
 ''' esimate bfactor and predict binding for each residue
 '''
 def generate_residue_binding\
-    (pdb_fn, smask_fn, embd_fn, ptcld_fn, atom_binding_fn,
-     resid_binding_fn, args):
+    (pdb_fn, smask_fn, embd_fn, ptcld_fn,
+     atom_binding_fn, resid_binding_fn, args):
 
     structure, atom_coords, ptcld_coords, bfactors =\
         utils.load_results(pdb_fn, embd_fn, ptcld_fn)
@@ -83,8 +83,8 @@ def generate_residue_binding\
         (atom_bfs, smask_fn, structure)
 
     classes, resid_bfs = utils.classify_residues\
-        (resid_bfs, resid_ids, args.resid_bf_cho, args.clas_cho,
-         args.resid_thresh, args.resid_bf_k)
+        (resid_bfs, resid_ids, args.resid_bf_cho,
+         args.resid_bf_k, args.clas_cho, args.resid_thresh)
 
     utils.save_atom_binding(atom_bfs, structure, atom_binding_fn)
     utils.save_resid_binding(resid_bfs, structure, resid_binding_fn)
@@ -97,7 +97,7 @@ def generate_residue_binding\
 def run_dmasif(pdb_nm, chains, pdb_fn, smask_fn, embd_fn, ptcld_fn,
                atom_bd_fn, resid_bd_fn, args):
 
-    #generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args)
+    #_ = generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args)
 
     resid_binding = generate_residue_binding\
         (pdb_fn, smask_fn, embd_fn, ptcld_fn, atom_bd_fn, resid_bd_fn, args)

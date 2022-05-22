@@ -60,12 +60,14 @@ def parse_all_pdbs(config):
 
 
 def parse_general(parser):
-    # load either all arguments from a config file
+
+    # EITHER load either all arguments from a config file
     parser.add('-c', '--config', required=False, is_config_file=True)
 
-    # or specify each as script arguments
+    # OR specify each as script arguments
     parser.add_argument('--phase', type=int, required=True)
 
+    # I) original dmasif arguments
     parser.add_argument('--device', type=str, default='cpu')
     #parser.add_argument('--single_pdb',type=str, default='5VAY-A_A_A.pdb')
     #parser.add_argument('--target_pdb',type=str, default='5VAY-A_A_A.pdb')
@@ -76,20 +78,6 @@ def parse_general(parser):
     parser.add_argument('--distance', type=float, default=1.05)
     parser.add_argument('--resolution', type=float, default=0.7,
                         help='0.7 -> higher point cloud density & performance') # /1
-
-    # thresholding and choices
-    parser.add_argument('--resid_bf_cho', type=float, default=0.0,
-                        help='0-max, 1-mean, 2-mean of k largest')
-    parser.add_argument('--atom_k', type=float, default=5,
-                        help='knn for atom bfactor')
-    parser.add_argument('--resid_bf_k', type=float, default=0.0,
-                        help='k to calculate residuce bfactor, resid_bf_cho==2')
-    parser.add_argument('--clas_cho', type=float, default=0.0,
-                        help='choice to classify residue')
-    parser.add_argument('--atom_thresh', type=float, default=1.0,
-                        help='dist threshold to for point cloud->atom, TODO')
-    parser.add_argument('--resid_thresh', type=float, default=0.0,
-                        help='threshold to classify residue, when clas_cho==1')
 
     parser.add_argument('--k', type=int, default=40)
     parser.add_argument('--seed', type=int, default=42)
@@ -115,8 +103,28 @@ def parse_general(parser):
     parser.add_argument('--single_protein',type=bool, default=True,
                         help='set to false for site')
     parser.add_argument('--use_mesh', type=bool, default=False)
-    #parser.add_argument('--single_protein',type=bool,default=True)
     parser.add_argument('--random_rotation', type=bool, default=False)
+
+
+    # II) threshold and choices for point cloud -> atom & atom -> residue coversion
+
+    ## atom b factor estimation parameter
+    parser.add_argument('--atom_k', type=float, default=1,
+                        help='knn to estimate atom bfactor')
+    parser.add_argument('--atom_thresh', type=float, default=0.7,
+                        help='dist threshold for point cloud->atom TODO')
+
+    ## residue bfactor estimation parameter
+    parser.add_argument('--resid_bf_k', type=float, default=0.0,
+                        help='k to calculate residuce bfactor, avg of largest k')
+    parser.add_argument('--resid_bf_cho', type=float, default=0.0,
+                        help='0-max, 1-mean, 2-mean of k largest')
+
+    ## residue interface classification parameter
+    parser.add_argument('--resid_thresh', type=float, default=0.2,
+                        help='threshold to classify residue, when clas_cho==1')
+    parser.add_argument('--clas_cho', type=float, default=1,
+                        help='choice to classify residue')
 
     args = parser.parse_args()
 

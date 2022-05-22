@@ -71,27 +71,30 @@ def load_results(pdb_fn, embd_fn, ptclds_fn):
     TODO: find all nearest points with dist below threshold and average
     at most k of these
 '''
-def estimate_atom_bfactor(dists, bfactors, threshold, k=1):
-    knn_id = np.argsort(dists, axis=1)[:,:k] # [n,k]
+def estimate_atom_bfactor(dists, bfactors, atom_thresh, atom_k=1):
+    knn_id = np.argsort(dists, axis=1)[:,:atom_k] # [n,k]
     atom_b_factor = np.mean(bfactors[knn_id], axis=1) # [n,]
     return atom_b_factor
 
+'''
+def estimate_atom_bfactor(dists, bfactors, atom_thresh, atom_k=1):
+    knn_id = np.argsort(dists, axis=1)[:,:atom_k] # [n,k]
+    atom_b_factor = np.mean(bfactors[knn_id], axis=1) # [n,]
+    return atom_b_factor
+'''
 
 ''' convert point cloud bfactor to atom bfactor
 '''
-def point_cloud_to_atom(atom_coords, ptcld_coords, bfactors, threshold, k):
+def point_cloud_to_atom(atom_coords, ptcld_coords, bfactors, atom_thresh, atom_k):
 
     dists = distance.cdist(atom_coords, ptcld_coords) # [n,m]
-    atom_bfs = estimate_atom_bfactor(dists, bfactors, threshold, k)
-
+    atom_bfs = estimate_atom_bfactor(dists, bfactors, atom_thresh, atom_k)
     '''
     nn_ind = np.argmin(dists, axis=1) # [n,]
     atom_b_factor = bfactors[nn_ind] # [n,]
     dists = dists[np.arange(len(dists)), nn_ind] # [n,]
     atom_b_factor[dists > threshold] = 0.0
     '''
-    #for i, atom in enumerate(structure.get_atoms()):
-    #    atom.set_bfactor(atom_b_factor[i] * 100)
     return atom_bfs
 
 
@@ -116,40 +119,51 @@ def atom_to_residue(atom_bfs, smask_fn, structure):
 
 ''' estimate bfactor for residuce based on bfactor for all its atoms
 '''
-def estimate_resid_bf(atoms_bf, cho, k=1):
-    if len(atoms_bf) == 0:
+def estimate_resid_bf(atoms_bf, resid_bf_cho, resid_bf_k=1):
+    if len(atoms_bf) == 0: # no atoms estimated for cur residue
         res = -1
-    elif cho == 0:
+    elif resid_bf_cho == 0: # max of all atom bfactor
         res = max(atoms_bf)
-    elif cho == 1:
+    elif resid_bf_cho == 1: # mean of all atom bfactor
         res = np.mean(atoms_bf)
-    elif cho == 2: # averge of largest k
+    elif resid_bf_cho == 2: # averge of largest k
         atoms = np.sort(atoms_bf)
-        res = np.mean(atoms[-k:])
+        res = np.mean(atoms[-resid_bf_k:])
     else:
         raise Exception('Unsupported residue bfactor estimation choice')
     return res
 
-def classify_residue(resid_bf, cho, threshold=0.0):
-    if resid_bf == -1: # no atoms predicted for residue
+
+''' classify one residue as interface(1)/non-interface(0)/unknown(-1)
+    based on its estimated bfactor
+'''
+def classify_residue(resid_bf, clas_cho, resid_thresh=0.0):
+    if resid_bf == -1: # no atoms predicted for currentresidue
         res = -1
-    elif cho == 0: # >0 intrfce atom -> intrfce residue
-        res = resid_bf > 0
-    elif cho == 1:
-        res = resid_bf > threshold
+    elif clas_cho == 0: # >0 intrfce atom -> intrfce residue
+        res = int(resid_bf > 0)
+    elif clas_cho == 1: # resid bfactor larger than thresh -> inttrfce residue
+        res = int(resid_bf > resid_thresh)
     else:
         raise Exception('Unsupported residue classification choice')
     return res
 
-def classify_residues(resid_bfs, resid_ids, bf_cho, clas_cho, threshold, k):
+
+''' estimate bfactors and classify all given residues
+'''
+def classify_residues\
+    (resid_bfs, resid_ids, resid_bf_cho, resid_bf_k, clas_cho, resid_thresh):
+
     classes, est_bfs = [], []
 
     for i, resid_id in enumerate(resid_ids):
-        est_bf = estimate_resid_bf(resid_bfs[resid_id], bf_cho, k)
-        clas = classify_residue(est_bf, clas_cho, threshold)
+        est_bf = estimate_resid_bf(resid_bfs[resid_id], resid_bf_cho, resid_bf_k)
+        clas = classify_residue(est_bf, clas_cho, resid_thresh)
         classes.append(clas)
         est_bfs.append(est_bf)
 
+    print('bfactors', est_bfs)
+    print('classes', classes)
     return classes, est_bfs
 
 def save_atom_binding(atom_bfs, structure, atom_binding_fn):
@@ -163,7 +177,6 @@ def save_resid_binding(resid_bfs, structure, resid_binding_fn):
     for i, resid in enumerate(structure.get_residues()):
         for atom in structure.get_atoms():
             atom.set_bfactor(resid_bfs[i])
-
     io = PDBIO()
     io.set_structure(structure)
     io.save(resid_binding_fn)
@@ -184,7 +197,8 @@ def gt_atom_to_residue(pdb_fn, imask_fn, smask_fn, args):
 
     resid_ids = np.array(list(resid_ids))
     resid_classes, _ = classify_residues\
-        (resid_bfs, resid_ids, bf_cho=0, clas_cho=0, threshold=None, k=None)
+        (resid_bfs, resid_ids, resid_bf_cho=0,
+         resid_bf_k=None, clas_cho=0, resid_thresh=None)
 
     return resid_ids, resid_classes
 
