@@ -1,10 +1,41 @@
 
+import csv
 import numpy as np
 
 from Bio.PDB import *
 from scipy.spatial import distance
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
+
+###################
+# general utilities
+
+def gather_fns(pdb_dir):
+    ids = []
+    for fn in fns:
+        if isfile(join('/content/pdbs',fn)):
+            ids.append(fn.split('-')[0])
+    ids = np.array(ids)
+
+    chains = []
+    for fn in fns:
+        if isfile(join('/content/pdbs',fn)):
+            chains.append(fn.split('-')[1].split('.')[0])
+    chains = np.array(chains)
+
+    pdb_fns = [id+'-'+chain+'.pdb'
+               for id,chain in zip(ids,chains)]
+
+    ptcld_fns = [pdf_fn+'_'+chain+'_predcoords.npy'
+                 for pdf_fn, chain in zip(pdf_fns, chains)]
+
+    embd_fns = [pdf_fn+'_'+chain+'_predfeatures_emb1.npy'
+                for pdf_fn, chain in zip(pdf_fns, chains)]
+    return pdb_fns, ptcld_fns, embd_fns
+
+
+###########################
+# atom and residue utilies
 
 def atom_valid(atom):
     return atom.get_parent().id[1] >= 0
@@ -13,20 +44,11 @@ def atom_valid(atom):
 '''
 def mask_atom(smask_fn, atom_b_factor):
     if smask_fn is None:
-        return
+        return atom_b_factor
 
     smask = np.load(smask_fn)
-
-    #l, n = len(smask), len(atom_b_factor)
-    #if n > l:
-    #    warnings.warn('more atoms than mask entries')
-    #elif n < l:
-    #    warnings.warn('more mask entries than atoms')
-    #smask = smask[:len]
-    #atom_b_factor = atom_b_factor[:len]
-
     atom_b_factor[~smask] = 0.0
-    return atom_b_factor #, min(n,l)
+    return atom_b_factor
 
 def load_results(pdb_fn, embd_fn, ptclds_fn):
     # load original atoms
@@ -96,19 +118,92 @@ def classify_residues(resid_bfs, resid_ids, threshold):
     return [classify_one_residue(resid_bfs[resid_id], threshold)
             for resid_id in resid_ids]
 
-''' get prediction for each residue of a single pdb id
-'''
-def get_dmasif(pdb_fn, embd_fn, ptclds_fn, smask_fn, dist_thresh, resid_thresh):
+def gt_atom_to_residue(pdb_fn, imask_fn, smask_fn):
+    imask = np.load(imask_fn)
+    smask = np.load(smask_fn)
+    parser = PDBParser(PERMISSIVE=True)
+    structure = parser.get_structure("structure", pdb_fn)
 
-    structure, atom_coords, ptcld_coords, bfactors = load_results\
-        (pdb_fn, embd_fn, ptclds_fn)
+    imask[~smask] = 0
+    resid_ids = set()
+    resid_bfs = defaultdict(lambda : [])
+    for i, atom in enumerate(structure.get_atoms()):
+        resid_id = atom.get_parent().id[1]
+        resid_ids.add(resid_id)
+        resid_bfs[resid_id].append(int(imask[i]))
 
-    atom_bfs, structure = point_cloud_to_atom\
-        (atom_coords, ptcld_coords, bfactors, structure, dist_thresh)
+    resid_ids = np.array(list(resid_ids))
+    resid_classes = classify_residues(resid_bfs, resid_ids, threshold=0)
+    return resid_ids, resid_classes
 
-    resid_bfs, resid_ids = atom_to_residue(atom_bfs, smask_fn, structure)
-    return classify_residues(resid_bfs, resid_ids, resid_thresh)
+def get_IDR(idr_pred_fn):
+    preds, resid_ids = [], []
 
+    with open(idr_pred_fn) as fp:
+        reader = csv.reader(fp, delimiter=',')
+        for i, row in enumerate(reader):
+            if i == 0: continue
+            preds.append(int(row[-1]))
+            resid_ids.append(int(row[0].split()[-1]))
+
+    return preds, resid_ids
+
+def sort_IDR(preds, resid_ids, gt_resid_ids):
+    res = {}
+    for gt_resid_id in gt_resid_ids:
+        res[gt_resid_id] = -1
+
+    for pred, resid_id in zip(preds, resid_ids):
+        # ignore ids not in gt
+        if not resid_id in gt_resid_ids:
+            continue
+
+        # convert idr result to 0/1/-1
+        if pred == -99.88: pred = -1
+        elif pred == 2:    pred = 1
+        res[resid_id] = pred
+
+    res = OrderedDict(sorted(res.items()))
+    preds = []
+    for k, v in res.items():
+        preds.append(v)
+    return preds
+
+
+#######################
+# evaluation utilities
+
+def evaluate(idr_resid_bind, dmasif_resid_bind, gt_resid_bind, gt_resid_ids):
+
+    valid_idx1 = set( np.where(idr_resid_bind != -1)[0] )
+    valid_idx2 = set( np.where(dmasif_resid_bind != -1)[0] )
+    valid_idxs = np.array(list(valid_idx1.intersection(valid_idx2)))
+
+    residue_ids = gt_resid_ids[valid_idxs]
+    gt_resid_bind = gt_resid_bind[valid_idxs]
+    idr_resid_bind = idr_resid_bind[valid_idxs]
+    dmasif_resid_bind = dmasif_resid_bind[valid_idxs]
+
+    print(f1(idr_resid_bind, gt_resid_bind))
+    print(f1(dmasif_resid_bind, gt_resid_bind))
+    #print(f1(dmasif_preds, gt_classes))
+    #print(np.where(np.array(gt_classes)==1))
+    #print(np.where(np.array(idr_preds)==1))
+    #print(np.where(np.array(dmasif_preds)==1))
+
+
+def confusion_score(pred, gt, v1, v2):
+    gt_ids = set(np.where(gt==v1)[0])
+    pred_ids = set(np.where(pred==v2)[0])
+    return len(gt_ids.intersection(pred_ids))
+
+def f1(pred, gt):
+    tp = confusion_score(pred,gt,1,1)
+    fp = confusion_score(pred,gt,0,1)
+    fn = confusion_score(pred,gt,1,0)
+    return tp / (tp + .5*(fp+fn))
+
+#def plot_roc():
 
 
 
