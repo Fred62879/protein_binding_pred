@@ -1,10 +1,12 @@
 
 import csv
 import numpy as np
+import matplotlib.pyplot as plt
 
 from Bio.PDB import *
 from scipy.spatial import distance
 from collections import defaultdict, OrderedDict
+from sklearn.metrics import roc_curve, roc_auc_score
 
 
 ###################
@@ -64,18 +66,33 @@ def load_results(pdb_fn, embd_fn, ptclds_fn):
     return structure, atom_coords, ptcld_coords, bfactors
 
 
-''' find nearest point for each atom and set b factor accordingly
+''' estimate bfactor for each atom based on point cloud points.
+    average k nearest neighbour
+    TODO: find all nearest points with dist below threshold and average
+    at most k of these
 '''
-def point_cloud_to_atom(atom_coords, ptcld_coords, bfactors, structure, threshold):
-    dists = distance.cdist(atom_coords, ptcld_coords) # [n,m]
-    nn_ind = np.argmin(dists, axis=1) # [n,]
+def estimate_atom_bfactor(dists, bfactors, threshold, k=1):
+    knn_id = np.argsort(dists, axis=1)[:,:k] # [n,k]
+    atom_b_factor = np.mean(bfactors[knn_id], axis=1) # [n,]
+    return atom_b_factor
 
+
+''' convert point cloud bfactor to atom bfactor
+'''
+def point_cloud_to_atom(atom_coords, ptcld_coords, bfactors, threshold, k):
+
+    dists = distance.cdist(atom_coords, ptcld_coords) # [n,m]
+    atom_bfs = estimate_atom_bfactor(dists, bfactors, threshold, k)
+
+    '''
+    nn_ind = np.argmin(dists, axis=1) # [n,]
     atom_b_factor = bfactors[nn_ind] # [n,]
     dists = dists[np.arange(len(dists)), nn_ind] # [n,]
     atom_b_factor[dists > threshold] = 0.0
+    '''
     #for i, atom in enumerate(structure.get_atoms()):
     #    atom.set_bfactor(atom_b_factor[i] * 100)
-    return atom_b_factor, structure
+    return atom_bfs
 
 
 ''' collect b factor of all atoms for each residue
@@ -97,28 +114,61 @@ def atom_to_residue(atom_bfs, smask_fn, structure):
     return resid_bfs, resid_ids
 
 
-''' classify residuce using bfactos from all its atoms
+''' estimate bfactor for residuce based on bfactor for all its atoms
 '''
-def classify_one_residue(atoms_bf, threshold):
-    # atoms_bf: bfactor for each atom in current residue
-    n_atoms = len(atoms_bf)
-    atoms_bf = np.array(atoms_bf)
+def estimate_resid_bf(atoms_bf, cho, k=1):
+    if len(atoms_bf) == 0:
+        res = -1
+    elif cho == 0:
+        res = max(atoms_bf)
+    elif cho == 1:
+        res = np.mean(atoms_bf)
+    elif cho == 2: # averge of largest k
+        atoms = np.sort(atoms_bf)
+        res = np.mean(atoms[-k:])
+    else:
+        raise Exception('Unsupported residue bfactor estimation choice')
+    return res
 
-    # no atoms predicted for residue
-    if n_atoms == 0: return -1
+def classify_residue(resid_bf, cho, threshold=0.0):
+    if resid_bf == -1: # no atoms predicted for residue
+        res = -1
+    elif cho == 0: # >0 intrfce atom -> intrfce residue
+        res = resid_bf > 0
+    elif cho == 1:
+        res = resid_bf > threshold
+    else:
+        raise Exception('Unsupported residue classification choice')
+    return res
 
-    atoms_bf = atoms_bf.astype(np.bool8)
-    if threshold == 0: # >0 intrfce atom -> intrfce residue
-        return int(atoms_bf.any())
+def classify_residues(resid_bfs, resid_ids, bf_cho, clas_cho, threshold, k):
+    classes, est_bfs = [], []
 
-    n_intrfce_atoms = sum(atoms_bf)
-    return int(n_intrfce_atoms > threshold*n_atoms)
+    for i, resid_id in enumerate(resid_ids):
+        est_bf = estimate_resid_bf(resid_bfs[resid_id], bf_cho, k)
+        clas = classify_residue(est_bf, clas_cho, threshold)
+        classes.append(clas)
+        est_bfs.append(est_bf)
 
-def classify_residues(resid_bfs, resid_ids, threshold):
-    return [classify_one_residue(resid_bfs[resid_id], threshold)
-            for resid_id in resid_ids]
+    return classes, est_bfs
 
-def gt_atom_to_residue(pdb_fn, imask_fn, smask_fn):
+def save_atom_binding(atom_bfs, structure, atom_binding_fn):
+    for i, atom in enumerate(structure.get_atoms()):
+        atom.set_bfactor(atom_bfs[i])
+    io = PDBIO()
+    io.set_structure(structure)
+    io.save(atom_binding_fn)
+
+def save_resid_binding(resid_bfs, structure, resid_binding_fn):
+    for i, resid in enumerate(structure.get_residues()):
+        for atom in structure.get_atoms():
+            atom.set_bfactor(resid_bfs[i])
+
+    io = PDBIO()
+    io.set_structure(structure)
+    io.save(resid_binding_fn)
+
+def gt_atom_to_residue(pdb_fn, imask_fn, smask_fn, args):
     imask = np.load(imask_fn)
     smask = np.load(smask_fn)
     parser = PDBParser(PERMISSIVE=True)
@@ -133,7 +183,9 @@ def gt_atom_to_residue(pdb_fn, imask_fn, smask_fn):
         resid_bfs[resid_id].append(int(imask[i]))
 
     resid_ids = np.array(list(resid_ids))
-    resid_classes = classify_residues(resid_bfs, resid_ids, threshold=0)
+    resid_classes, _ = classify_residues\
+        (resid_bfs, resid_ids, bf_cho=0, clas_cho=0, threshold=None, k=None)
+
     return resid_ids, resid_classes
 
 def get_IDR(idr_pred_fn):
@@ -173,7 +225,12 @@ def sort_IDR(preds, resid_ids, gt_resid_ids):
 #######################
 # evaluation utilities
 
-def evaluate(idr_resid_bind, dmasif_resid_bind, gt_resid_bind, gt_resid_ids):
+def evaluate(idr_resid_bind, dmasif_resid_bind, gt_resid_bind,
+             gt_resid_ids, idr_roc_fn, dmasif_roc_fn):
+
+    gt_resid_bind = np.array(gt_resid_bind)
+    idr_resid_bind = np.array(idr_resid_bind)
+    dmasif_resid_bind = np.array(dmasif_resid_bind)
 
     valid_idx1 = set( np.where(idr_resid_bind != -1)[0] )
     valid_idx2 = set( np.where(dmasif_resid_bind != -1)[0] )
@@ -186,10 +243,12 @@ def evaluate(idr_resid_bind, dmasif_resid_bind, gt_resid_bind, gt_resid_ids):
 
     print(f1(idr_resid_bind, gt_resid_bind))
     print(f1(dmasif_resid_bind, gt_resid_bind))
-    #print(f1(dmasif_preds, gt_classes))
-    #print(np.where(np.array(gt_classes)==1))
-    #print(np.where(np.array(idr_preds)==1))
-    #print(np.where(np.array(dmasif_preds)==1))
+
+    print(roc_auc(idr_resid_bind, gt_resid_bind))
+    print(roc_auc(dmasif_resid_bind, gt_resid_bind))
+
+    roc_curves(idr_resid_bind, gt_resid_bind, idr_roc_fn)
+    roc_curves(dmasif_resid_bind, gt_resid_bind, dmasif_roc_fn)
 
 
 def confusion_score(pred, gt, v1, v2):
@@ -203,52 +262,11 @@ def f1(pred, gt):
     fn = confusion_score(pred,gt,1,0)
     return tp / (tp + .5*(fp+fn))
 
-#def plot_roc():
+def roc_auc(pred, gt):
+    return roc_auc_score(gt, pred)
 
-
-
-'''
-def get_len(structure):
-    return sum([1 for _ in structure.get_atoms()])
-
-def get_resid_ids(pdb_fn):
-    parser = PDBParser(PERMISSIVE=True)
-    structure = parser.get_structure("structure", pdb_fn)
-
-    resid_ids = set()
-    for i, atom in enumerate(structure.get_atoms()):
-      id = atom.get_parent().id[1]
-      resid_ids.add(id)
-    return np.array(list(resid_ids))
-
-def get(pdb, get_len=False, get_atom_ids=False, get_resid_ids=False, get_atom_bfactors=False, get_resid_bfactors=False, get_resids=False):
-  parser = PDBParser(PERMISSIVE=True)
-  structure = parser.get_structure("structure", pdb)
-  atoms = structure.get_atoms()
-  if get_len: print(sum(1 for _ in atoms)) #
-
-  if get_resid_bfactors:
-    resid_bfactors = []
-    for i, resid in enumerate(structure.get_residues()):
-      resid_bfactors.append(resid.get_bfactor())
-    return np.array(resid_bfactors)
-
-  if get_atom_bfactors:
-    atom_bfactors = []
-    for i, atom in enumerate(structure.get_atoms()):
-      atom_bfactors.append(atom.get_bfactor())
-    return np.array(atom_bfactors)
-
-  if get_atom_ids:
-    atom_ids = []
-    for i, atom in enumerate(structure.get_atoms()):
-      atom_ids.append(atom.get_id())
-    return np.array(atom_ids)
-
-
-  if get_resids:
-    resids = []
-    for i, resid in enumerate(structure.get_residues()):
-      resids.append(resid.get_id())
-    return np.array(resids)
-'''
+def roc_curves(pred, gt, fn):
+    fpr, tpr, _ = roc_curve(gt, pred)
+    plt.plot(fpr, tpr)
+    plt.savefig(fn)
+    plt.close()
