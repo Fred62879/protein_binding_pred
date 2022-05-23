@@ -91,7 +91,7 @@ def generate_residue_binding\
 def run_dmasif(pdb_nm, chains, pdb_fn, smask_fn, embd_fn, ptcld_fn,
                atom_bd_fn, resid_bd_fn, args):
 
-    _ = generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args)
+    #_ = generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args)
 
     resid_binding = generate_residue_binding\
         (pdb_fn, smask_fn, embd_fn, ptcld_fn, atom_bd_fn, resid_bd_fn, args)
