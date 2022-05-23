@@ -11,6 +11,7 @@ from dMaSIF import run_dmasif
 ''' run both dmasif and idr on the same pdb and compare with gt
 '''
 def run_phase1(args):
+
     dmasif_resid_bind = run_dmasif\
         (args.pdb_nms[0], args.chains[0], args.pdb_fns[0],
          args.smask_fns[0], args.embd_fns[0], args.ptcld_fns[0],
@@ -29,14 +30,20 @@ def run_phase1(args):
 ''' predict residue binding for all specified pdb using dmasif
 '''
 def run_phase2(args):
+    f1s, aucs = {}, {}
+
     for i, pdb_fn in enumerate(args.pdb_fns):
         dmasif_resid_bind = run_dmasif\
             (args.pdb_nms[i], args.chains[i], pdb_fn, args.smask_fns[i],
              args.embd_fns[i], args.ptcld_fns[i], args.atom_binding_fns[i],
              args.resid_binding_fns[i], args)
 
-    utils.evaluate()
+        gt_ids, gt_resid_bind = utils.gt_atom_to_residue\
+            (args.pdb_fns[0], args.imask_fns[0], args.smask_fns[0], args)
 
+        f1, auc = utils.evaluate_phase2\
+            (dmasif_resid_bind, gt_resid_bind, gt_resid_ids,
+             dmasif_roc_fn, args)
 
 
 if __name__ == '__main__':

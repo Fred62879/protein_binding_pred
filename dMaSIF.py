@@ -76,16 +76,16 @@ def generate_residue_binding\
     structure, atom_coords, ptcld_coords, bfactors = \
         utils.load_results(pdb_fn, embd_fn, ptcld_fn)
 
-    atom_bfs = utils.point_cloud_to_atom\
+    atom_bfs, atom_clases = utils.point_cloud_to_atom\
         (atom_coords, ptcld_coords, bfactors, smask_fn, args)
 
-    resid_bfs, resid_ids = utils.atom_to_residue(atom_bfs, structure)
-    classes, resid_bfs = utils.classify_residues(resid_bfs, resid_ids, args)
+    resid_clases, resid_ids = utils.atom_to_residue(atom_clases, structure)
+    resid_clases = utils.classify_residues(resid_clases, resid_ids, args.resid_clas_cho, args.resid_clas_ratio)
 
     utils.save_atom_binding(atom_bfs, structure, atom_binding_fn)
-    utils.save_resid_binding(resid_bfs, structure, resid_binding_fn)
+    #utils.save_resid_binding(atom_bfs, structure, resid_binding_fn)
 
-    return classes
+    return resid_clases
 
 
 ''' run dmasif on given pdb and return  binding for each residue

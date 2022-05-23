@@ -109,24 +109,23 @@ def parse_general(parser):
     # II) threshold and choices for point cloud -> atom & atom -> residue coversion
 
     ## atom b factor estimation parameter
-    parser.add_argument('--atom_k', type=float, default=1,
+    parser.add_argument('--atom_k', type=float, default=5,
                         help='knn to estimate atom bfactor')
-    parser.add_argument('--atom_bf_thresh', type=float, default=1.5,
+    parser.add_argument('--atom_bf_thresh', type=float, default=0.8,
                         help='dist threshold for point cloud->atom')
-    parser.add_argument('--atom_clas_thresh', type=float, default=1,
+    parser.add_argument('--atom_clas_thresh', type=float, default=0.3,
                         help='threshold to classify atoms')
 
     ## residue bfactor estimation parameter
-    parser.add_argument('--resid_k', type=float, default=1,
-                        help='k to calculate residuce bfactor, avg of largest k')
-    parser.add_argument('--resid_bf_cho', type=float, default=0,
-                        help='0-max, 1-mean, 2-mean of k largest')
+    #parser.add_argument('--resid_k', type=float, default=1, help='k to calculate residuce bfactor, avg of largest k')
+    #parser.add_argument('--resid_bf_cho', type=float, default=0, help='0-max, 1-mean, 2-mean of k largest')
 
     ## residue interface classification parameter
-    parser.add_argument('--resid_thresh', type=float, default=1,
-                        help='threshold to classify residue, when clas_cho==1')
+    #parser.add_argument('--resid_thresh', type=float, default=1, help='threshold to classify residue, when clas_cho==1')
     parser.add_argument('--resid_clas_cho', type=float, default=1,
                         help='choice to classify residue')
+    parser.add_argument('--resid_clas_ratio', type=float, default=0.5,
+                        help='ratio*100% interface atoms -> interface residuce ')
 
     args = parser.parse_args()
 

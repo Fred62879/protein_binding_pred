@@ -76,7 +76,7 @@ def estimate_atom_bfactor(atom_coords, ptcld_coords, bfactors, smask_fn, args):
     knn_bfactors = bfactors[knn_id] # [n,k]
 
     # find points from above that are within distance threshold for each atom
-    print(np.round(knn_dists.T[:50,0],2))
+    #print(np.round(knn_dists.T[:50,0],2))
     knn_valid = (knn_dists < args.atom_bf_thresh).astype(np.int8)
     knn_bfactors *= knn_valid
 
@@ -89,9 +89,9 @@ def estimate_atom_bfactor(atom_coords, ptcld_coords, bfactors, smask_fn, args):
     atom_bfactors = knn_bfactors / knn_counts
 
     # mask out non-surface atoms
-    print('before mask', np.count_nonzero(atom_bfactors))
+    #print('before mask', np.count_nonzero(atom_bfactors))
     atom_bfactors = mask_atom(smask_fn, atom_bfactors)
-    print('after mask', np.count_nonzero(atom_bfactors))
+    #print('after mask', np.count_nonzero(atom_bfactors))
     np.save('../data/phase1/pred_atom.npy',atom_bfactors)
     return atom_bfactors
 
@@ -99,92 +99,69 @@ def estimate_atom_bfactor(atom_coords, ptcld_coords, bfactors, smask_fn, args):
     based on estimated bfactor
 '''
 def classify_atom(atom_bfs, args):
+    '''
     no_pred_ids = atom_bfs==-1
     atom_classes = (atom_bfs > args.atom_clas_thresh).astype(np.int8)
     atom_classes[no_pred_ids] = -1
     return atom_classes
+    '''
+    return atom_bfs
 
 
 ''' convert point cloud bfactor to atom bfactor
 '''
 def point_cloud_to_atom(atom_coords, ptcld_coords, bfactors, smask_fn, args):
     atom_bfs = estimate_atom_bfactor\
-        (atom_coords, ptcld_coords, bfactors, smask_fn)
-    atom_classes = classify_atom(atom_bfs, args)
-    return atom_bfs
+        (atom_coords, ptcld_coords, bfactors, smask_fn, args)
+    atom_clases = classify_atom(atom_bfs, args)
+    return atom_bfs, atom_clases
 
 
 ''' collect b factor of all atoms for each residue
 '''
-def atom_to_residue(atom_bfs, structure):
+def atom_to_residue(atom_clases, structure):
     resid_ids = set()
-    resid_bfs = defaultdict(lambda : [])
+    resid_clases = defaultdict(lambda : [])
 
     for i, atom in enumerate(structure.get_atoms()):
-        #if i >= len: break # end of atoms and/or mask
-        #if not atom_valid(atom): continue
-
         resid_id = atom.get_parent().id[1]
         resid_ids.add(resid_id)
-        resid_bfs[resid_id].append(atom_bfs[i])
+        resid_clases[resid_id].append(atom_clases[i])
 
     resid_ids = np.array(list(resid_ids))
-    return resid_bfs, resid_ids
-
-
-''' estimate bfactor for residuce based on bfactor for all its atoms
-'''
-def estimate_resid_bf(atoms_bf, args):
-    cho = args.resid_bf_cho
-
-    if len(atoms_bf) == 0: # no atoms estimated for cur residue
-        res = -1
-    elif cho == 0: # max of all atom bfactor
-        res = max(atoms_bf)
-    elif cho == 1: # mean of all atom bfactor
-        res = np.mean(atoms_bf)
-    elif cho == 2: # averge of largest k
-        atoms = np.sort(atoms_bf)
-        res = np.mean(atoms[-args.resid_bf_k:])
-    else:
-        raise Exception('Unsupported residue bfactor estimation choice')
-    return res
+    return resid_clases, resid_ids
 
 
 ''' classify one residue as interface(1)/non-interface(0)/unknown(-1)
-    based on its estimated bfactor
+    based on its estimated bfactor.
 '''
-def classify_residue(resid_bf, args):
-    cho = args.resid_clas_cho
+def classify_one_residue(i, resid_clas, resid_clas_cho, resid_clas_ratio):
+    n_atoms = len(resid_clas)
+    #print(i, n_atoms, np.round(resid_clas, 2))
 
-    if resid_bf == -1: # no atoms predicted for currentresidue
+    resid_clas = np.array(resid_clas).astype(np.bool8)
+    if n_atoms == 0: # no atoms predicted for current residue
         res = -1
-    elif cho == 0: # >0 intrfce atom -> intrfce residue
-        res = int(resid_bf > 0)
-    elif cho == 1: # resid bfactor larger than thresh -> inttrfce residue
-        res = int(resid_bf > args.resid_thresh)
+    elif resid_clas_cho == 0: # >0 intrfce atom -> intrfce residue
+        res = resid_clas.any()
+    elif resid_clas_cho == 1: # more than certain ratio of atoms being intrfce
+        res = np.count_nonzero(resid_clas) > resid_clas_ratio*n_atoms
     else:
         raise Exception('Unsupported residue classification choice')
+
+    #print(i, n_atoms, res, resid_clas.astype(np.int8))
     return res
 
 
 ''' estimate bfactors and classify all given residues
+    resid_bf is a map from resid_id to list of atom classes
 '''
-def classify_residues(resid_bfs, resid_ids, args):
+def classify_residues(resid_clases, resid_ids, resid_clas_cho,
+                      resid_clas_ratio):
 
-    classes, est_bfs = [], []
-
-    for i, resid_id in enumerate(resid_ids):
-        est_bf = estimate_resid_bf(resid_bfs[resid_id], args)
-        clas = classify_residue(est_bf, args)
-        classes.append(clas)
-        est_bfs.append(est_bf)
-
-    print('=====bfactors', np.round(est_bfs,1))
-    print()
-    print('=====classes', classes)
-    print()
-    return classes, est_bfs
+    return [classify_one_residue(i, resid_clases[resid_id],
+                                 resid_clas_cho, resid_clas_ratio)
+            for i, resid_id in enumerate(resid_ids)]
 
 def save_atom_binding(atom_bfs, structure, atom_binding_fn):
     for i, atom in enumerate(structure.get_atoms()):
@@ -216,10 +193,7 @@ def gt_atom_to_residue(pdb_fn, imask_fn, smask_fn, args):
         resid_bfs[resid_id].append(int(imask[i]))
 
     resid_ids = np.array(list(resid_ids))
-    resid_classes, _ = classify_residues\
-        (resid_bfs, resid_ids, resid_bf_cho=0,
-         resid_bf_k=None, clas_cho=0, resid_thresh=None)
-
+    resid_classes = classify_residues(resid_bfs, resid_ids, 0, None)
     return resid_ids, resid_classes
 
 def get_IDR(idr_pred_fn):
@@ -259,8 +233,23 @@ def sort_IDR(preds, resid_ids, gt_resid_ids):
 #######################
 # evaluation utilities
 
-def evaluate(idr_resid_bind, dmasif_resid_bind, gt_resid_bind,
-             gt_resid_ids, idr_roc_fn, dmasif_roc_fn):
+def evaluate_phase2(dmasif_resid_bind, gt_resid_bind,
+                    gt_resid_ids, dmasif_roc_fn):
+
+    gt_resid_bind = np.array(gt_resid_bind)
+    dmasif_resid_bind = np.array(dmasif_resid_bind)
+    valid_ids = np.where(dmasif_resid_bind != -1)[0]
+
+    residue_ids = gt_resid_ids[valid_ids]
+    gt_resid_bind = gt_resid_bind[valid_ids]
+    dmasif_resid_bind = dmasif_resid_bind[valid_ids]
+
+    print('F1 score', f1(dmasif_resid_bind, gt_resid_bind))
+    print('AUC', roc_auc(dmasif_resid_bind, gt_resid_bind))
+    roc_curves(dmasif_resid_bind, gt_resid_bind, dmasif_roc_fn)
+
+def evaluate_phase1(idr_resid_bind, dmasif_resid_bind, gt_resid_bind,
+                    gt_resid_ids, idr_roc_fn, dmasif_roc_fn):
 
     gt_resid_bind = np.array(gt_resid_bind)
     idr_resid_bind = np.array(idr_resid_bind)
