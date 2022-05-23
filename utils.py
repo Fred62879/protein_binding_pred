@@ -1,12 +1,13 @@
 
 import csv
+import glob
 import numpy as np
 import matplotlib.pyplot as plt
 
 from Bio.PDB import *
 from os.path import exists
-from os import remove, makedirs
 from scipy.spatial import distance
+from os import remove, makedirs, listdir
 from collections import defaultdict, OrderedDict
 from sklearn.metrics import roc_curve, roc_auc_score
 
@@ -20,14 +21,15 @@ def upload_pdb_to_dataset(args):
   %cd -q /content
 '''
 
-def make_dirs(dir):
+def make_dirs(dir, overwrite):
     isExist = exists(dir)
     if not isExist:
       makedirs(dir)
-    else:
+    elif overwrite or len(listdir(dir)) == 0:
       files = glob.glob(dir + '/*')
       for f in files:
         remove(f)
+
 
 ###########################
 # atom and residue utilies
@@ -43,7 +45,6 @@ def mask_atom(smask_fn, atom_b_factor):
 
     smask = np.load(smask_fn)
     atom_b_factor[~smask] = 0.0
-    #print('smask', smask.astype(np.int8)[:100])
     return atom_b_factor
 
 def load_results(pdb_fn, embd_fn, ptclds_fn):
@@ -76,7 +77,6 @@ def estimate_atom_bfactor(atom_coords, ptcld_coords, bfactors, smask_fn, args):
     knn_bfactors = bfactors[knn_id] # [n,k]
 
     # find points from above that are within distance threshold for each atom
-    #print(np.round(knn_dists.T[:50,0],2))
     knn_valid = (knn_dists < args.atom_bf_thresh).astype(np.int8)
     knn_bfactors *= knn_valid
 
@@ -89,10 +89,7 @@ def estimate_atom_bfactor(atom_coords, ptcld_coords, bfactors, smask_fn, args):
     atom_bfactors = knn_bfactors / knn_counts
 
     # mask out non-surface atoms
-    #print('before mask', np.count_nonzero(atom_bfactors))
     atom_bfactors = mask_atom(smask_fn, atom_bfactors)
-    #print('after mask', np.count_nonzero(atom_bfactors))
-    np.save('../data/phase1/pred_atom.npy',atom_bfactors)
     return atom_bfactors
 
 ''' classify atom as interface(1)/non-interface(0)/unknown(-1)
@@ -233,20 +230,29 @@ def sort_IDR(preds, resid_ids, gt_resid_ids):
 #######################
 # evaluation utilities
 
-def evaluate_phase2(dmasif_resid_bind, gt_resid_bind,
-                    gt_resid_ids, dmasif_roc_fn):
+def confusion_score(pred, gt, v1, v2):
+    gt_ids = set(np.where(gt==v1)[0])
+    pred_ids = set(np.where(pred==v2)[0])
+    return len(gt_ids.intersection(pred_ids))
 
-    gt_resid_bind = np.array(gt_resid_bind)
-    dmasif_resid_bind = np.array(dmasif_resid_bind)
-    valid_ids = np.where(dmasif_resid_bind != -1)[0]
+def calculate_f1(pred, gt):
+    tp = confusion_score(pred,gt,1,1)
+    fp = confusion_score(pred,gt,0,1)
+    fn = confusion_score(pred,gt,1,0)
+    return tp / (tp + .5*(fp+fn))
 
-    residue_ids = gt_resid_ids[valid_ids]
-    gt_resid_bind = gt_resid_bind[valid_ids]
-    dmasif_resid_bind = dmasif_resid_bind[valid_ids]
+def roc_auc(pred, gt):
+    return roc_auc_score(gt, pred)
 
-    print('F1 score', f1(dmasif_resid_bind, gt_resid_bind))
-    print('AUC', roc_auc(dmasif_resid_bind, gt_resid_bind))
-    roc_curves(dmasif_resid_bind, gt_resid_bind, dmasif_roc_fn)
+def plot_roc_curves(pred, gt, fn):
+    fpr, tpr, _ = roc_curve(gt, pred)
+    plt.plot(fpr, tpr)
+    plt.savefig(fn)
+    plt.close()
+
+def save_metrics(maps, fn):
+    res = np.array([[resid_id, v] for resid_id, v in maps.items()])
+    np.save(fn, res)
 
 def evaluate_phase1(idr_resid_bind, dmasif_resid_bind, gt_resid_bind,
                     gt_resid_ids, idr_roc_fn, dmasif_roc_fn):
@@ -264,32 +270,29 @@ def evaluate_phase1(idr_resid_bind, dmasif_resid_bind, gt_resid_bind,
     idr_resid_bind = idr_resid_bind[valid_idxs]
     dmasif_resid_bind = dmasif_resid_bind[valid_idxs]
 
-    print(f1(idr_resid_bind, gt_resid_bind))
-    print(f1(dmasif_resid_bind, gt_resid_bind))
+    print(calculate_f1(idr_resid_bind, gt_resid_bind))
+    print(calculate_f1(dmasif_resid_bind, gt_resid_bind))
 
     print(roc_auc(idr_resid_bind, gt_resid_bind))
     print(roc_auc(dmasif_resid_bind, gt_resid_bind))
 
-    roc_curves(idr_resid_bind, gt_resid_bind, idr_roc_fn)
-    roc_curves(dmasif_resid_bind, gt_resid_bind, dmasif_roc_fn)
+    plot_roc_curves(idr_resid_bind, gt_resid_bind, idr_roc_fn)
+    plot_roc_curves(dmasif_resid_bind, gt_resid_bind, dmasif_roc_fn)
 
+def evaluate_phase2(dmasif_resid_bind, gt_resid_bind,
+                    gt_resid_ids, dmasif_roc_fn):
 
-def confusion_score(pred, gt, v1, v2):
-    gt_ids = set(np.where(gt==v1)[0])
-    pred_ids = set(np.where(pred==v2)[0])
-    return len(gt_ids.intersection(pred_ids))
+    gt_resid_bind = np.array(gt_resid_bind)
+    dmasif_resid_bind = np.array(dmasif_resid_bind)
+    valid_ids = np.where(dmasif_resid_bind != -1)[0]
 
-def f1(pred, gt):
-    tp = confusion_score(pred,gt,1,1)
-    fp = confusion_score(pred,gt,0,1)
-    fn = confusion_score(pred,gt,1,0)
-    return tp / (tp + .5*(fp+fn))
+    residue_ids = gt_resid_ids[valid_ids]
+    gt_resid_bind = gt_resid_bind[valid_ids]
+    dmasif_resid_bind = dmasif_resid_bind[valid_ids]
 
-def roc_auc(pred, gt):
-    return roc_auc_score(gt, pred)
+    f1 = calculate_f1(dmasif_resid_bind, gt_resid_bind)
+    auc = roc_auc(dmasif_resid_bind, gt_resid_bind)
+    plot_roc_curves(dmasif_resid_bind, gt_resid_bind, dmasif_roc_fn)
 
-def roc_curves(pred, gt, fn):
-    fpr, tpr, _ = roc_curve(gt, pred)
-    plt.plot(fpr, tpr)
-    plt.savefig(fn)
-    plt.close()
+    print('[F1/AUC]', f1, auc)
+    return f1, auc

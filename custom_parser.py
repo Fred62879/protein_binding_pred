@@ -1,10 +1,12 @@
 
 from os import listdir
+from utils import make_dirs
 from os.path import join, isfile
 
 
 def parse_all_pdbs(config):
 
+    roc_nm = 'roc.png'
     atom_bd_nm = '_atom_binding.pdb'
     embd_nm = '_predfeatures_emb1.npy'
     point_cloud_nm = '_predcoords.npy'
@@ -12,6 +14,7 @@ def parse_all_pdbs(config):
     sufce_mask_sufx = '-surface-atom-mask.npy'
     itfce_mask_sufx = '-interface-atom-mask.npy'
 
+    roc_fns = []
     atom_bd_fns, resid_bd_fns = [], []
     pdb_fns, chains, pdb_nms = [], [], set()
     smask_fns, imask_fns, embd_fns, ptcld_fns = [], [], [], []
@@ -33,12 +36,14 @@ def parse_all_pdbs(config):
 
         # add all filenames
         fn_prefx = join(config['dataset_dir'], pdb_nm)
+        roc_fn = join(config['roc_dir'], pdb_nm + '_' + roc_nm)
         embd_fn = join(config['preds_dir'], pdb_nm + '_' + pdb_chains + embd_nm)
         ptcld_fn = join(config['preds_dir'], pdb_nm + '_' + pdb_chains + point_cloud_nm)
         atom_bd_fn = join(config['outputs_dir'], pdb_nm + '_' + pdb_chains + atom_bd_nm)
         resid_bd_fn = join(config['outputs_dir'], pdb_nm + '_' + pdb_chains + resid_bd_nm)
 
         pdb_nms.add(pdb_nm)
+        roc_fns.append(roc_fn)
         embd_fns.append(embd_fn)
         ptcld_fns.append(ptcld_fn)
         chains.append([pdb_chains])
@@ -50,6 +55,7 @@ def parse_all_pdbs(config):
 
     config['chains'] = chains
     config['pdb_fns'] = pdb_fns
+    config['roc_fns'] = roc_fns
     config['embd_fns'] = embd_fns
     config['ptcld_fns'] = ptcld_fns
     config['smask_fns'] = smask_fns
@@ -59,13 +65,14 @@ def parse_all_pdbs(config):
     config['resid_binding_fns'] = resid_bd_fns
 
 
-def parse_general(parser):
+def parse_general(parser, experiment_id):
 
     # EITHER load either all arguments from a config file
     parser.add('-c', '--config', required=False, is_config_file=True)
 
     # OR specify each as script arguments
     parser.add_argument('--phase', type=int, required=True)
+    parser.add_argument('--experiment_id', type=int, required=experiment_id)
 
     # I) original dmasif arguments
     parser.add_argument('--device', type=str, default='cpu')
@@ -76,13 +83,9 @@ def parse_general(parser):
     parser.add_argument('--dropout', type=float, default=0.0)
     parser.add_argument('--variance', type=float, default=0.1)
     parser.add_argument('--distance', type=float, default=1.05)
-    parser.add_argument('--resolution', type=float, default=0.7,
-                        help='0.7 -> higher point cloud density & performance') # /1
 
     parser.add_argument('--k', type=int, default=40)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--radius', type=int,  default=9,
-                        help='patch radius, settings doesnt impact performance?')
     parser.add_argument('--n_layers', type=int, default=3)
     parser.add_argument('--atom_dims', type=int, default=6)
     parser.add_argument('--emb_dims', type=int, default=16)
@@ -91,7 +94,6 @@ def parse_general(parser):
     parser.add_argument('--in_channels', type=int, default=16)
     parser.add_argument('--orientation_units', type=int, default=16)
     parser.add_argument('--unet_hidden_channels', type=int, default=8)
-
     parser.add_argument("--curvature_scales",type=list,default=[1.0, 2.0, 3.0, 5.0, 10.0])
 
     parser.add_argument('--site', type=bool, default=True,
@@ -111,17 +113,12 @@ def parse_general(parser):
     ## atom b factor estimation parameter
     parser.add_argument('--atom_k', type=float, default=5,
                         help='knn to estimate atom bfactor')
-    parser.add_argument('--atom_bf_thresh', type=float, default=0.8,
+    parser.add_argument('--atom_bf_thresh', type=float, default=1.5,
                         help='dist threshold for point cloud->atom')
-    parser.add_argument('--atom_clas_thresh', type=float, default=0.3,
+    parser.add_argument('--atom_clas_thresh', type=float, default=0.5,
                         help='threshold to classify atoms')
 
-    ## residue bfactor estimation parameter
-    #parser.add_argument('--resid_k', type=float, default=1, help='k to calculate residuce bfactor, avg of largest k')
-    #parser.add_argument('--resid_bf_cho', type=float, default=0, help='0-max, 1-mean, 2-mean of k largest')
-
     ## residue interface classification parameter
-    #parser.add_argument('--resid_thresh', type=float, default=1, help='threshold to classify residue, when clas_cho==1')
     parser.add_argument('--resid_clas_cho', type=float, default=1,
                         help='choice to classify residue')
     parser.add_argument('--resid_clas_ratio', type=float, default=0.5,
@@ -132,7 +129,11 @@ def parse_general(parser):
     # add new arguments
     config = vars(args)
 
-    # hardcode strings
+    # hardcoded filenames and dirs
+    f1_fn_str = 'f1.npy'
+    auc_fn_str = 'auc.npy'
+
+    roc_dir_str = 'roc'
     npy_dir_str = 'npys'
     preds_dir_str = 'preds'
     chains_dir_str = 'chains'
@@ -140,43 +141,49 @@ def parse_general(parser):
     outputs_dir_str = 'outputs'
     dataset_dir_str = 'dataset'
     model_dir_str = './MaSIF_colab/models'
-    data_dir = '../data/phase' + str(args.phase)
 
-    if args.phase == 1:
+    # setup current experiment
+    radii = [9,9,12,12]
+    resolutions = [1, 0.7, 1, 0.7]
+    sup_samplings = [100, 150, 100, 150]
+    models = ['dMaSIF_site_3layer_16dims_9A_100sup_epoch64',
+              'dMaSIF_site_3layer_16dims_9A_0.7res_150sup_epoch85',
+              'dMaSIF_site_3layer_16dims_12A_100sup_epoch71',
+              'dMaSIF_site_3layer_16dims_12A_0.7res_150sup_epoch59']
+
+    config['radius'] = radii[experiment_id]
+    config['resolution'] = resolutions[experiment_id]
+    config['sup_sampling'] = sup_samplings[experiment_id]
+    config['model_path'] = join(model_dir_str, models[experiment_id])
+
+    experiment_name = models[experiment_id][26:]
+
+    # add filename and directories
+    data_dir = join('/content/data', 'phase' + str(args.phase))
+    exp_dir = join(data_dir, experiment_name)
+
+    config['f1_fn'] = join(exp_dir, f1_fn_str)
+    config['auc_fn'] = join(exp_dir, auc_fn_str)
+
+    config['roc_dir'] = join(exp_dir, roc_dir_str)
+    config['npy_dir'] = join(exp_dir, npy_dir_str)
+    config['preds_dir'] = join(exp_dir, preds_dir_str)
+    config['chains_dir'] = join(exp_dir, chains_dir_str)
+    config['outputs_dir'] = join(exp_dir, outputs_dir_str)
+    config['dataset_dir'] = join(data_dir, dataset_dir_str)
+
+    make_dirs(data_dir, overwrite=False)
+    make_dirs(config['roc_dir'], overwrite=False)
+    make_dirs(config['npy_dir'], overwrite=False)
+    make_dirs(config['preds_dir'], overwrite=False)
+    make_dirs(config['chains_dir'], overwrite=False)
+    make_dirs(config['outputs_dir'], overwrite=False)
+    make_dirs(config['dataset_dir'], overwrite=False)
+
+    if config['phase'] == 1:
         config['idr_fn'] = join(data_dir, idr_output_str)
         config['idr_roc_fn'] = join(data_dir, 'idr_roc.png')
         config['dmasif_roc_fn'] = join(data_dir, 'dmasif_roc.png')
 
-    elif args.phase == 2:
-        pass
-    else:
-        raise Exception('Unsupported phase')
-
-    if args.radius == 9:
-        if args.resolution == 1:
-            model_path = join(model_dir_str, 'dMaSIF_site_3layer_16dims_9A_100sup_epoch64')
-            sup_sampling = 100
-        else:
-            model_path = join(model_dir_str, 'dMaSIF_site_3layer_16dims_9A_0.7res_150sup_epoch85')
-            supsampling = 150
-
-    elif args.radius == 12:
-        if args.resolution == 1:
-            model_path = join(model_dir_str, 'dMaSIF_site_3layer_16dims_12A_100sup_epoch71')
-            supsampling = 100
-        else:
-            model_path = join(model_dir_str, 'dMaSIF_site_3layer_16dims_12A_0.7res_150sup_epoch59')
-            supsampling = 100
-
-    config['model_path'] = model_path
-    config['sup_sampling'] = supsampling
-
-    config['npy_dir'] = join(data_dir, npy_dir_str)
-    config['preds_dir'] = join(data_dir, preds_dir_str)
-    config['chains_dir'] = join(data_dir, chains_dir_str)
-    config['outputs_dir'] = join(data_dir, outputs_dir_str)
-    config['dataset_dir'] = join(data_dir, dataset_dir_str)
-
     parse_all_pdbs(config)
-
     return config

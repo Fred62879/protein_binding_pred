@@ -46,7 +46,6 @@ def generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args):
 
     if single_pdb != "":
         single_data_dir = Path(args.npy_dir)
-        print(single_pdb, single_data_dir)
         test_dataset = [load_protein_pair(single_pdb, single_data_dir, single_pdb=True)]
         test_pdb_ids = [single_pdb]
 
@@ -80,7 +79,8 @@ def generate_residue_binding\
         (atom_coords, ptcld_coords, bfactors, smask_fn, args)
 
     resid_clases, resid_ids = utils.atom_to_residue(atom_clases, structure)
-    resid_clases = utils.classify_residues(resid_clases, resid_ids, args.resid_clas_cho, args.resid_clas_ratio)
+    resid_clases = utils.classify_residues\
+        (resid_clases, resid_ids, args.resid_clas_cho, args.resid_clas_ratio)
 
     utils.save_atom_binding(atom_bfs, structure, atom_binding_fn)
     #utils.save_resid_binding(atom_bfs, structure, resid_binding_fn)
