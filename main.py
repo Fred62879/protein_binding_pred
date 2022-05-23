@@ -31,9 +31,13 @@ def run_phase1(args):
 def run_phase2(args):
     for i, pdb_fn in enumerate(args.pdb_fns):
         dmasif_resid_bind = run_dmasif\
-            (pdb_nm, chain_nm, pdb_fn, smask_fn, embd_fn, ptcld_fn,
-             args.atom_binding_fns, args.resid_binding_fns, args.dist_thresh,
-             args.resid_thresh, args)
+            (args.pdb_nms[i], args.chains[i], pdb_fn, args.smask_fns[i],
+             args.embd_fns[i], args.ptcld_fns[i], args.atom_binding_fns[i],
+             args.resid_binding_fns[i], args)
+
+    utils.evaluate()
+
+
 
 if __name__ == '__main__':
 

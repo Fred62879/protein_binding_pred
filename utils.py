@@ -4,37 +4,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from Bio.PDB import *
+from os.path import exists
+from os import remove, makedirs
 from scipy.spatial import distance
 from collections import defaultdict, OrderedDict
 from sklearn.metrics import roc_curve, roc_auc_score
 
+'''
+def upload_pdb_to_dataset(args):
+  assert(exists(args.dataset_dir))
 
-###################
-# general utilities
+  dir = args.dataset_dir
+  %cd -q {dir}
+  uploaded = files.upload()
+  %cd -q /content
+'''
 
-def gather_fns(pdb_dir):
-    ids = []
-    for fn in fns:
-        if isfile(join('/content/pdbs',fn)):
-            ids.append(fn.split('-')[0])
-    ids = np.array(ids)
-
-    chains = []
-    for fn in fns:
-        if isfile(join('/content/pdbs',fn)):
-            chains.append(fn.split('-')[1].split('.')[0])
-    chains = np.array(chains)
-
-    pdb_fns = [id+'-'+chain+'.pdb'
-               for id,chain in zip(ids,chains)]
-
-    ptcld_fns = [pdf_fn+'_'+chain+'_predcoords.npy'
-                 for pdf_fn, chain in zip(pdf_fns, chains)]
-
-    embd_fns = [pdf_fn+'_'+chain+'_predfeatures_emb1.npy'
-                for pdf_fn, chain in zip(pdf_fns, chains)]
-    return pdb_fns, ptcld_fns, embd_fns
-
+def make_dirs(dir):
+    isExist = exists(dir)
+    if not isExist:
+      makedirs(dir)
+    else:
+      files = glob.glob(dir + '/*')
+      for f in files:
+        remove(f)
 
 ###########################
 # atom and residue utilies
@@ -50,6 +43,7 @@ def mask_atom(smask_fn, atom_b_factor):
 
     smask = np.load(smask_fn)
     atom_b_factor[~smask] = 0.0
+    #print('smask', smask.astype(np.int8)[:100])
     return atom_b_factor
 
 def load_results(pdb_fn, embd_fn, ptclds_fn):
@@ -67,43 +61,64 @@ def load_results(pdb_fn, embd_fn, ptclds_fn):
 
 
 ''' estimate bfactor for each atom based on point cloud points.
-    average k nearest neighbour
-    TODO: find all nearest points with dist below threshold and average
+    find all nearest points with dist below threshold and average
     at most k of these
 '''
-def estimate_atom_bfactor(dists, bfactors, atom_thresh, atom_k=1):
-    knn_id = np.argsort(dists, axis=1)[:,:atom_k] # [n,k]
-    atom_b_factor = np.mean(bfactors[knn_id], axis=1) # [n,]
-    return atom_b_factor
+def estimate_atom_bfactor(atom_coords, ptcld_coords, bfactors, smask_fn, args):
 
+    dists = distance.cdist(atom_coords, ptcld_coords) # [n,m]
+    n, m = dists.shape
+
+    # find k nearest point for each atom
+    knn_id = np.argsort(dists, axis=1)[:,:args.atom_k] # [n,k]
+    rids = np.arange(0, n).repeat(args.atom_k).reshape((n,-1))
+    knn_dists = dists[rids, knn_id] # [n,k]
+    knn_bfactors = bfactors[knn_id] # [n,k]
+
+    # find points from above that are within distance threshold for each atom
+    print(np.round(knn_dists.T[:50,0],2))
+    knn_valid = (knn_dists < args.atom_bf_thresh).astype(np.int8)
+    knn_bfactors *= knn_valid
+
+    # average over bfactors for these points
+    knn_counts = np.sum(knn_valid, axis=1)
+    knn_bfactors = np.sum(knn_bfactors,axis=1)
+
+    knn_counts[knn_counts==0] = 1    # avoid division by zero
+    knn_bfactors[knn_counts==0] = -1 # atoms with no estimations
+    atom_bfactors = knn_bfactors / knn_counts
+
+    # mask out non-surface atoms
+    print('before mask', np.count_nonzero(atom_bfactors))
+    atom_bfactors = mask_atom(smask_fn, atom_bfactors)
+    print('after mask', np.count_nonzero(atom_bfactors))
+    np.save('../data/phase1/pred_atom.npy',atom_bfactors)
+    return atom_bfactors
+
+''' classify atom as interface(1)/non-interface(0)/unknown(-1)
+    based on estimated bfactor
 '''
-def estimate_atom_bfactor(dists, bfactors, atom_thresh, atom_k=1):
-    knn_id = np.argsort(dists, axis=1)[:,:atom_k] # [n,k]
-    atom_b_factor = np.mean(bfactors[knn_id], axis=1) # [n,]
-    return atom_b_factor
-'''
+def classify_atom(atom_bfs, args):
+    no_pred_ids = atom_bfs==-1
+    atom_classes = (atom_bfs > args.atom_clas_thresh).astype(np.int8)
+    atom_classes[no_pred_ids] = -1
+    return atom_classes
+
 
 ''' convert point cloud bfactor to atom bfactor
 '''
-def point_cloud_to_atom(atom_coords, ptcld_coords, bfactors, atom_thresh, atom_k):
-
-    dists = distance.cdist(atom_coords, ptcld_coords) # [n,m]
-    atom_bfs = estimate_atom_bfactor(dists, bfactors, atom_thresh, atom_k)
-    '''
-    nn_ind = np.argmin(dists, axis=1) # [n,]
-    atom_b_factor = bfactors[nn_ind] # [n,]
-    dists = dists[np.arange(len(dists)), nn_ind] # [n,]
-    atom_b_factor[dists > threshold] = 0.0
-    '''
+def point_cloud_to_atom(atom_coords, ptcld_coords, bfactors, smask_fn, args):
+    atom_bfs = estimate_atom_bfactor\
+        (atom_coords, ptcld_coords, bfactors, smask_fn)
+    atom_classes = classify_atom(atom_bfs, args)
     return atom_bfs
 
 
 ''' collect b factor of all atoms for each residue
 '''
-def atom_to_residue(atom_bfs, smask_fn, structure):
+def atom_to_residue(atom_bfs, structure):
     resid_ids = set()
     resid_bfs = defaultdict(lambda : [])
-    atom_bfs = mask_atom(smask_fn, atom_bfs)
 
     for i, atom in enumerate(structure.get_atoms()):
         #if i >= len: break # end of atoms and/or mask
@@ -119,16 +134,18 @@ def atom_to_residue(atom_bfs, smask_fn, structure):
 
 ''' estimate bfactor for residuce based on bfactor for all its atoms
 '''
-def estimate_resid_bf(atoms_bf, resid_bf_cho, resid_bf_k=1):
+def estimate_resid_bf(atoms_bf, args):
+    cho = args.resid_bf_cho
+
     if len(atoms_bf) == 0: # no atoms estimated for cur residue
         res = -1
-    elif resid_bf_cho == 0: # max of all atom bfactor
+    elif cho == 0: # max of all atom bfactor
         res = max(atoms_bf)
-    elif resid_bf_cho == 1: # mean of all atom bfactor
+    elif cho == 1: # mean of all atom bfactor
         res = np.mean(atoms_bf)
-    elif resid_bf_cho == 2: # averge of largest k
+    elif cho == 2: # averge of largest k
         atoms = np.sort(atoms_bf)
-        res = np.mean(atoms[-resid_bf_k:])
+        res = np.mean(atoms[-args.resid_bf_k:])
     else:
         raise Exception('Unsupported residue bfactor estimation choice')
     return res
@@ -137,13 +154,15 @@ def estimate_resid_bf(atoms_bf, resid_bf_cho, resid_bf_k=1):
 ''' classify one residue as interface(1)/non-interface(0)/unknown(-1)
     based on its estimated bfactor
 '''
-def classify_residue(resid_bf, clas_cho, resid_thresh=0.0):
+def classify_residue(resid_bf, args):
+    cho = args.resid_clas_cho
+
     if resid_bf == -1: # no atoms predicted for currentresidue
         res = -1
-    elif clas_cho == 0: # >0 intrfce atom -> intrfce residue
+    elif cho == 0: # >0 intrfce atom -> intrfce residue
         res = int(resid_bf > 0)
-    elif clas_cho == 1: # resid bfactor larger than thresh -> inttrfce residue
-        res = int(resid_bf > resid_thresh)
+    elif cho == 1: # resid bfactor larger than thresh -> inttrfce residue
+        res = int(resid_bf > args.resid_thresh)
     else:
         raise Exception('Unsupported residue classification choice')
     return res
@@ -151,19 +170,20 @@ def classify_residue(resid_bf, clas_cho, resid_thresh=0.0):
 
 ''' estimate bfactors and classify all given residues
 '''
-def classify_residues\
-    (resid_bfs, resid_ids, resid_bf_cho, resid_bf_k, clas_cho, resid_thresh):
+def classify_residues(resid_bfs, resid_ids, args):
 
     classes, est_bfs = [], []
 
     for i, resid_id in enumerate(resid_ids):
-        est_bf = estimate_resid_bf(resid_bfs[resid_id], resid_bf_cho, resid_bf_k)
-        clas = classify_residue(est_bf, clas_cho, resid_thresh)
+        est_bf = estimate_resid_bf(resid_bfs[resid_id], args)
+        clas = classify_residue(est_bf, args)
         classes.append(clas)
         est_bfs.append(est_bf)
 
-    print('bfactors', est_bfs)
-    print('classes', classes)
+    print('=====bfactors', np.round(est_bfs,1))
+    print()
+    print('=====classes', classes)
+    print()
     return classes, est_bfs
 
 def save_atom_binding(atom_bfs, structure, atom_binding_fn):

@@ -111,19 +111,21 @@ def parse_general(parser):
     ## atom b factor estimation parameter
     parser.add_argument('--atom_k', type=float, default=1,
                         help='knn to estimate atom bfactor')
-    parser.add_argument('--atom_thresh', type=float, default=0.7,
-                        help='dist threshold for point cloud->atom TODO')
+    parser.add_argument('--atom_bf_thresh', type=float, default=1.5,
+                        help='dist threshold for point cloud->atom')
+    parser.add_argument('--atom_clas_thresh', type=float, default=1,
+                        help='threshold to classify atoms')
 
     ## residue bfactor estimation parameter
-    parser.add_argument('--resid_bf_k', type=float, default=0.0,
+    parser.add_argument('--resid_k', type=float, default=1,
                         help='k to calculate residuce bfactor, avg of largest k')
-    parser.add_argument('--resid_bf_cho', type=float, default=0.0,
+    parser.add_argument('--resid_bf_cho', type=float, default=0,
                         help='0-max, 1-mean, 2-mean of k largest')
 
     ## residue interface classification parameter
-    parser.add_argument('--resid_thresh', type=float, default=0.2,
+    parser.add_argument('--resid_thresh', type=float, default=1,
                         help='threshold to classify residue, when clas_cho==1')
-    parser.add_argument('--clas_cho', type=float, default=1,
+    parser.add_argument('--resid_clas_cho', type=float, default=1,
                         help='choice to classify residue')
 
     args = parser.parse_args()
@@ -143,6 +145,9 @@ def parse_general(parser):
 
     if args.phase == 1:
         config['idr_fn'] = join(data_dir, idr_output_str)
+        config['idr_roc_fn'] = join(data_dir, 'idr_roc.png')
+        config['dmasif_roc_fn'] = join(data_dir, 'dmasif_roc.png')
+
     elif args.phase == 2:
         pass
     else:
@@ -172,9 +177,6 @@ def parse_general(parser):
     config['chains_dir'] = join(data_dir, chains_dir_str)
     config['outputs_dir'] = join(data_dir, outputs_dir_str)
     config['dataset_dir'] = join(data_dir, dataset_dir_str)
-
-    config['idr_roc_fn'] = join(data_dir, 'idr_roc.png')
-    config['dmasif_roc_fn'] = join(data_dir, 'dmasif_roc.png')
 
     parse_all_pdbs(config)
 

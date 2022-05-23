@@ -63,7 +63,7 @@ def generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args):
 
     # Perform one pass through the data:
     info = iterate(net, test_loader, None, args, test=True,
-                   save_path=Path(output_path), pdb_ids=test_pdb_ids)
+                   save_path=Path(args.outputs_dir), pdb_ids=test_pdb_ids)
     return info
 
 
@@ -73,18 +73,14 @@ def generate_residue_binding\
     (pdb_fn, smask_fn, embd_fn, ptcld_fn,
      atom_binding_fn, resid_binding_fn, args):
 
-    structure, atom_coords, ptcld_coords, bfactors =\
+    structure, atom_coords, ptcld_coords, bfactors = \
         utils.load_results(pdb_fn, embd_fn, ptcld_fn)
 
     atom_bfs = utils.point_cloud_to_atom\
-        (atom_coords, ptcld_coords, bfactors, args.atom_thresh, args.atom_k)
+        (atom_coords, ptcld_coords, bfactors, smask_fn, args)
 
-    resid_bfs, resid_ids = utils.atom_to_residue\
-        (atom_bfs, smask_fn, structure)
-
-    classes, resid_bfs = utils.classify_residues\
-        (resid_bfs, resid_ids, args.resid_bf_cho,
-         args.resid_bf_k, args.clas_cho, args.resid_thresh)
+    resid_bfs, resid_ids = utils.atom_to_residue(atom_bfs, structure)
+    classes, resid_bfs = utils.classify_residues(resid_bfs, resid_ids, args)
 
     utils.save_atom_binding(atom_bfs, structure, atom_binding_fn)
     utils.save_resid_binding(resid_bfs, structure, resid_binding_fn)
