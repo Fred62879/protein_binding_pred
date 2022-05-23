@@ -54,11 +54,12 @@ def run_phase2(args):
 
 if __name__ == '__main__':
 
-    experiment_id = 0 # 1,2,3
-
     parser = configargparse.ArgumentParser()
-    config = custom_parser.parse_general(parser, experiment_id)
+    config = custom_parser.parse_general(parser)
     args = argparse.Namespace(**config)
+
+    print('=== phase{} experiment {} ==='.
+          format(args.phase, args.experiment_id))
 
     if args.phase == 1: #5, 1.5, 0.5, 1, 0.5
         run_phase1(args)

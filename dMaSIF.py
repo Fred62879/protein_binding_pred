@@ -28,7 +28,7 @@ def generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args):
 
     parser = PDBParser(PERMISSIVE=True)
     structure = parser.get_structure("structure", pdb_fn)
-    #convert_to_npy(pdb_fn, args.chains_dir, args.npy_dir, chains)
+    convert_to_npy(pdb_fn, args.chains_dir, args.npy_dir, chains)
     single_pdb = "{n}_{c}_{c}".format(n=pdb_nm, c=chains[0])
 
     # Ensure reproducability:
@@ -56,13 +56,12 @@ def generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args):
     )
 
     net = dMaSIF(args)
-    # net.load_state_dict(torch.load(args.model_path, map_location=args.device))
     net.load_state_dict(torch.load(args.model_path, map_location=args.device)["model_state_dict"])
     net = net.to(args.device)
 
     # Perform one pass through the data:
     info = iterate(net, test_loader, None, args, test=True,
-                   save_path=Path(args.outputs_dir), pdb_ids=test_pdb_ids)
+                   save_path=Path(args.preds_dir), pdb_ids=test_pdb_ids)
     return info
 
 
@@ -83,7 +82,6 @@ def generate_residue_binding\
         (resid_clases, resid_ids, args.resid_clas_cho, args.resid_clas_ratio)
 
     utils.save_atom_binding(atom_bfs, structure, atom_binding_fn)
-    #utils.save_resid_binding(atom_bfs, structure, resid_binding_fn)
 
     return resid_clases
 
@@ -93,7 +91,7 @@ def generate_residue_binding\
 def run_dmasif(pdb_nm, chains, pdb_fn, smask_fn, embd_fn, ptcld_fn,
                atom_bd_fn, resid_bd_fn, args):
 
-    #_ = generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args)
+    _ = generate_point_cloud_binding(pdb_fn, pdb_nm, chains, args)
 
     resid_binding = generate_residue_binding\
         (pdb_fn, smask_fn, embd_fn, ptcld_fn, atom_bd_fn, resid_bd_fn, args)

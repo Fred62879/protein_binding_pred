@@ -65,14 +65,14 @@ def parse_all_pdbs(config):
     config['resid_binding_fns'] = resid_bd_fns
 
 
-def parse_general(parser, experiment_id):
+def parse_general(parser):
 
     # EITHER load either all arguments from a config file
     parser.add('-c', '--config', required=False, is_config_file=True)
 
     # OR specify each as script arguments
     parser.add_argument('--phase', type=int, required=True)
-    parser.add_argument('--experiment_id', type=int, required=experiment_id)
+    parser.add_argument('--experiment_id', type=int, required=True)
 
     # I) original dmasif arguments
     parser.add_argument('--device', type=str, default='cpu')
@@ -151,6 +151,7 @@ def parse_general(parser, experiment_id):
               'dMaSIF_site_3layer_16dims_12A_100sup_epoch71',
               'dMaSIF_site_3layer_16dims_12A_0.7res_150sup_epoch59']
 
+    experiment_id = config['experiment_id']
     config['radius'] = radii[experiment_id]
     config['resolution'] = resolutions[experiment_id]
     config['sup_sampling'] = sup_samplings[experiment_id]
@@ -159,7 +160,7 @@ def parse_general(parser, experiment_id):
     experiment_name = models[experiment_id][26:]
 
     # add filename and directories
-    data_dir = join('/content/data', 'phase' + str(args.phase))
+    data_dir = join('../data', 'phase' + str(args.phase))
     exp_dir = join(data_dir, experiment_name)
 
     config['f1_fn'] = join(exp_dir, f1_fn_str)
