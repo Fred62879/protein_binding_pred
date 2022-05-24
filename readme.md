@@ -37,9 +37,10 @@ I compiled almost exactly the same code on [colab](https://colab.research.google
 ## Phase 1
 I tried only the '9A_100sup_epoch64' model for dMaSIF.
 
-         F1    AUC
-IDR     0.32   0.67
-dMaSIF  0.24   0.63
+|        |  F1   |  AUC |
+|--------|:-----:|-----:|
+|  IDR   |  0.32 | 0.67 |
+| dMaSIF |  0.24 | 0.64 |
 
 roc graph in `./result/phase1`
 
